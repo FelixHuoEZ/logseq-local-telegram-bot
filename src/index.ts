@@ -23,6 +23,8 @@ const JOB_TYPES: { [ key: string ]: string } = {
   [DEADLINE_NOTIFICATION_JOB]: "deadline"
 };
 
+let recoveringBot = false;
+
 const blockContextMenuHandlers: { [key: string]: OperationHandler } = {
   "Send": handleSendOperation
 };
@@ -152,6 +154,33 @@ async function stopMainBot(bot: Telegraf<Context>) {
   log("bot has stopped as Main Bot");
 }
 
+async function recoverBot(bot: Telegraf<Context>) {
+  if (recoveringBot) {
+    log("bot is already recovering");
+    return;
+  }
+
+  if (!settings.botToken) {
+    log("skip recovering bot: bot token is not set");
+    return;
+  }
+
+  recoveringBot = true;
+  try {
+    await stopMainBot(bot);
+  } catch (e) {
+    error(`failed to stop bot when recovering: ${(<Error>e).message}`);
+  }
+
+  try {
+    await start(bot);
+  } catch (e) {
+    error(`failed to restart bot when recovering: ${(<Error>e).message}`);
+  } finally {
+    recoveringBot = false;
+  }
+}
+
 function setupBot(bot: Telegraf<Context>) {
   // command should be before message
   setupCommandHandlers(bot);
@@ -190,6 +219,11 @@ async function start(bot: Telegraf<Context>) {
 
 async function main() {
   const bot = new Telegraf<Context>("");
+
+  bot.catch(async (err, ctx) => {
+    error(`bot caught an error: ${(<Error>err).message}`);
+    await recoverBot(bot);
+  });
 
   // logseq.settings is NOT available until now
   initializeSettings((name) => {

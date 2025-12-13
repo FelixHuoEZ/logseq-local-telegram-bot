@@ -12,7 +12,7 @@ import { oneDark, color } from "@codemirror/theme-one-dark";
 // json-view doesn't have types
 // @ts-ignore
 import jsonview from '@pgrabovets/json-view';
-import "@pgrabovets/json-view/src/jsonview.scss"
+import "@pgrabovets/json-view/dist/jsonview.css"
 
 import { Command, parseCommand, runCommand, stringifyCommand, commandInfos } from "./command-utils";
 import { log } from "./utils";

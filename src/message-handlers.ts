@@ -4,7 +4,7 @@ import { Telegraf, Context } from "telegraf";
 import { MessageSubTypes } from "telegraf/typings/telegram-types";
 import { Message, MessageEntity } from "typegram";
 
-import { log, getDateString, getTimestampString, isMessageAuthorized } from "./utils";
+import { log, error, getDateString, getTimestampString, isMessageAuthorized } from "./utils";
 import { settings, JOURNAL_PAGE_NAME } from "./settings";
 
 export { setupMessageHandlers };
@@ -106,43 +106,52 @@ function handleEntity(text: string, entity: MessageEntity): string {
 
 function textHandlerGenerator() {
   async function handler(ctx: Context, message: Message.TextMessage) {
-    if (!message?.text) {
-      ctx.reply("Message is not valid");
-      return;
-    }
-
-    let text = message.text;
-
-    if (message.entities) {
-      message.entities.sort((a, b) => a.offset - b.offset);
-      let subs: string[] = [];
-      let offset = 0;
-      for (let entity of message.entities) {
-        subs.push(text.substring(offset, entity.offset));
-        let sub = text.substring(entity.offset, entity.offset + entity.length);
-        subs.push(handleEntity(sub, entity));
-        offset = entity.offset + entity.length;
+    try {
+      if (!message?.text) {
+        await ctx.reply("Message is not valid");
+        return;
       }
 
-      if (offset < text.length) {
-        subs.push(text.substring(offset));
+      let text = message.text;
+
+      if (message.entities) {
+        message.entities.sort((a, b) => a.offset - b.offset);
+        let subs: string[] = [];
+        let offset = 0;
+        for (let entity of message.entities) {
+          subs.push(text.substring(offset, entity.offset));
+          let sub = text.substring(entity.offset, entity.offset + entity.length);
+          subs.push(handleEntity(sub, entity));
+          offset = entity.offset + entity.length;
+        }
+
+        if (offset < text.length) {
+          subs.push(text.substring(offset));
+        }
+
+        text = subs.join("");
       }
 
-      text = subs.join("");
-    }
+      if (settings.addTimestamp) {
+        const receiveDate = new Date();
+        receiveDate.setTime(message.date * 1000);
 
-    if (settings.addTimestamp) {
-      const receiveDate = new Date();
-      receiveDate.setTime(message.date * 1000);
+        text = `${getTimestampString(receiveDate)} - ${text}`; 
+      }
 
-      text = `${getTimestampString(receiveDate)} - ${text}`; 
-    }
-
-    if (!await writeBlock(
-      settings.pageName,
-      settings.inboxName,
-      text)) {
-      ctx.reply("Failed to write this to Logseq");
+      if (!await writeBlock(
+        settings.pageName,
+        settings.inboxName,
+        text)) {
+        await ctx.reply("Failed to write this to Logseq");
+      }
+    } catch (e) {
+      error(`failed to handle text message: ${(<Error>e).message}`);
+      try {
+        await ctx.reply("Failed to handle this message");
+      } catch (replyError) {
+        error(`failed to reply text error: ${(<Error>replyError).message}`);
+      }
     }
   }
 
@@ -158,53 +167,66 @@ function photoTemplate(caption: string, id: string, url: string) {
 
 function photoHandlerGenerator(bot: Telegraf<Context>) {
   async function handler(ctx: Context, message: Message.PhotoMessage) {
-    if (!message?.photo || message.photo.length == 0) {
-      ctx.reply("Photo is not valid");
-      return;
-    }
+    try {
+      if (!message?.photo || message.photo.length == 0) {
+        await ctx.reply("Photo is not valid");
+        return;
+      }
 
-    const lastPhoto = message.photo[message.photo.length - 1];
-    const photoUrl = await ctx.telegram.getFileLink(lastPhoto.file_id);
-    const caption = message.caption ?? DEFAULT_CAPTION;
-    let text = photoTemplate(caption, lastPhoto.file_id, photoUrl);
-    if (settings.addTimestamp) {
-      const receiveDate = new Date();
-      receiveDate.setTime(message.date * 1000);
+      const lastPhoto = message.photo[message.photo.length - 1];
+      const photoUrl = await ctx.telegram.getFileLink(lastPhoto.file_id);
+      const caption = message.caption ?? DEFAULT_CAPTION;
+      let text = photoTemplate(caption, lastPhoto.file_id, photoUrl);
+      if (settings.addTimestamp) {
+        const receiveDate = new Date();
+        receiveDate.setTime(message.date * 1000);
 
-      text = `${getTimestampString(receiveDate)} - ${text}`;
-    }
+        text = `${getTimestampString(receiveDate)} - ${text}`;
+      }
 
-    if (!await writeBlock(
-      settings.pageName,
-      settings.inboxName,
-      text)) {
-      ctx.reply("Failed to write this to Logseq");
+      if (!await writeBlock(
+        settings.pageName,
+        settings.inboxName,
+        text)) {
+        await ctx.reply("Failed to write this to Logseq");
+      }
+    } catch (e) {
+      error(`failed to handle photo message: ${(<Error>e).message}`);
+      try {
+        await ctx.reply("Failed to handle this photo");
+      } catch (replyError) {
+        error(`failed to reply photo error: ${(<Error>replyError).message}`);
+      }
     }
   }
 
   logseq.App.onMacroRendererSlotted(async ({ slot, payload }) => {
-    let [type, caption, photoId] = payload.arguments;
-    // backward compatibility
-    if (type !== ':local_telegram_bot' && type !== ":local_telegram_bot-showPhoto") {
-      return;
+    try {
+      let [type, caption, photoId] = payload.arguments;
+      // backward compatibility
+      if (type !== ':local_telegram_bot' && type !== ":local_telegram_bot-showPhoto") {
+        return;
+      }
+
+      const block = await logseq.Editor.getBlock(payload.uuid);
+      if (!block) {
+        log(`fail to get block(${payload.uuid})`);
+        return;
+      }
+
+      const photoUrl = await bot.telegram.getFileLink(photoId);
+      const content = block.content.replace(
+                        SHOW_PHOTO_RENDERER_REGEX,
+                        photoTemplate(caption, photoId, photoUrl));
+
+      // replace the whole block with new renderer and img
+      // renderer runs once at one time, so no loop
+      // invalid renderer removes itself from rendering
+      // photo url from Telegram is not permanent, need to fetch everytime
+      logseq.Editor.updateBlock(payload.uuid, content);
+    } catch (e) {
+      error(`failed to render photo: ${(<Error>e).message}`);
     }
-
-    const block = await logseq.Editor.getBlock(payload.uuid);
-    if (!block) {
-      log(`fail to get block(${payload.uuid})`);
-      return;
-    }
-
-    const photoUrl = await bot.telegram.getFileLink(photoId);
-    const content = block.content.replace(
-                      SHOW_PHOTO_RENDERER_REGEX,
-                      photoTemplate(caption, photoId, photoUrl));
-
-    // replace the whole block with new renderer and img
-    // renderer runs once at one time, so no loop
-    // invalid renderer removes itself from rendering
-    // photo url from Telegram is not permanent, need to fetch everytime
-    logseq.Editor.updateBlock(payload.uuid, content);
   });
 
   return {
@@ -215,26 +237,35 @@ function photoHandlerGenerator(bot: Telegraf<Context>) {
 
 function documentHandlerGenerator(bot: Telegraf<Context>) {
   async function handler(ctx: Context, message: Message.DocumentMessage) {
-    if (!message.document.mime_type?.startsWith("image/")) {
-      log(`document mime_type is not image: ${message.document.mime_type}`);
-      return;
-    }
+    try {
+      if (!message.document.mime_type?.startsWith("image/")) {
+        log(`document mime_type is not image: ${message.document.mime_type}`);
+        return;
+      }
 
-    const photoUrl = await ctx.telegram.getFileLink(message.document.file_id);
-    const caption = message.caption ?? DEFAULT_CAPTION;
-    let text = photoTemplate(caption, message.document.file_id, photoUrl);
-    if (settings.addTimestamp) {
-      const receiveDate = new Date();
-      receiveDate.setTime(message.date * 1000);
+      const photoUrl = await ctx.telegram.getFileLink(message.document.file_id);
+      const caption = message.caption ?? DEFAULT_CAPTION;
+      let text = photoTemplate(caption, message.document.file_id, photoUrl);
+      if (settings.addTimestamp) {
+        const receiveDate = new Date();
+        receiveDate.setTime(message.date * 1000);
 
-      text = `${getTimestampString(receiveDate)} - ${text}`;
-    }
+        text = `${getTimestampString(receiveDate)} - ${text}`;
+      }
 
-    if (!await writeBlock(
-      settings.pageName,
-      settings.inboxName,
-      text)) {
-      ctx.reply("Failed to write this to Logseq");
+      if (!await writeBlock(
+        settings.pageName,
+        settings.inboxName,
+        text)) {
+        await ctx.reply("Failed to write this to Logseq");
+      }
+    } catch (e) {
+      error(`failed to handle document message: ${(<Error>e).message}`);
+      try {
+        await ctx.reply("Failed to handle this image");
+      } catch (replyError) {
+        error(`failed to reply document error: ${(<Error>replyError).message}`);
+      }
     }
   }
   return {
