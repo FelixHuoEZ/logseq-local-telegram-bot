@@ -49,5 +49,8 @@
     "id": "logseq-local-telegram-bot",
     "title": "Local Telegram Bot",
     "icon": "./icon.png"
+  },
+  "resolutions": {
+    "@lezer/lr": "^1.4.2"
   }
 }

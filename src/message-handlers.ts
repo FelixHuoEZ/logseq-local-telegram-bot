@@ -11,6 +11,7 @@ export { setupMessageHandlers };
 
 type MessageHandler = (ctx: Context, message: Message.ServiceMessage) => Promise<void>;
 type EntityHandler = (text: string, entity: MessageEntity) => string;
+type ServiceMsg = Message.ServiceMessage & { chat?: { id?: number } };
 
 // FIXME: it matches all showPhoto, instead of current one
 const SHOW_PHOTO_RENDERER_REGEX = /{{renderer :local_telegram_bot-showPhoto[^}]*}}!\[[^\]]*\]\([^\)]*\)/;
@@ -104,6 +105,13 @@ function handleEntity(text: string, entity: MessageEntity): string {
   return text;
 }
 
+function logMessage(kind: string, message: ServiceMsg) {
+  const user = message.from?.username ?? "unknown";
+  const chat = message.chat?.id ?? "unknown";
+  const id = (message as any).message_id ?? "n/a";
+  log(`received ${kind} message from ${user} chat ${chat} id ${id}`);
+}
+
 function textHandlerGenerator() {
   async function handler(ctx: Context, message: Message.TextMessage) {
     try {
@@ -111,6 +119,8 @@ function textHandlerGenerator() {
         await ctx.reply("Message is not valid");
         return;
       }
+
+      logMessage("text", message);
 
       let text = message.text;
 
@@ -172,6 +182,8 @@ function photoHandlerGenerator(bot: Telegraf<Context>) {
         await ctx.reply("Photo is not valid");
         return;
       }
+
+      logMessage("photo", message);
 
       const lastPhoto = message.photo[message.photo.length - 1];
       const photoUrl = await ctx.telegram.getFileLink(lastPhoto.file_id);
@@ -242,6 +254,8 @@ function documentHandlerGenerator(bot: Telegraf<Context>) {
         log(`document mime_type is not image: ${message.document.mime_type}`);
         return;
       }
+
+      logMessage("document", message);
 
       const photoUrl = await ctx.telegram.getFileLink(message.document.file_id);
       const caption = message.caption ?? DEFAULT_CAPTION;

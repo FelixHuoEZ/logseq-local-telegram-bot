@@ -2,15 +2,43 @@ import "@logseq/libs";
 import { BlockEntity } from "@logseq/libs/dist/LSPlugin.user";
 
 import { Message } from "typegram";
-
 import { settings } from "./settings";
 
-export { log, error, showMsg, showError, getDateString, getTimestampString, isMessageAuthorized, nameof, stringifyBlocks };
+export { log, error, showMsg, showError, getDateString, getTimestampString, isMessageAuthorized, nameof, stringifyBlocks, initPageLogger };
 
 const PROJECT_NAME = "Local Telegram Bot";
+const LOG_PAGE_NAME = "Local Telegram Bot Log";
+let logPageUuid: string | null = null;
+let logPageReady = false;
+let logging = false;
 
 function format(message: string) {
   return `[${PROJECT_NAME}] ` + message;
+}
+
+async function ensureLogPage() {
+  if (logPageReady) {
+    return;
+  }
+
+  try {
+    let page = await logseq.Editor.getPage(LOG_PAGE_NAME);
+    if (!page) {
+      page = await logseq.Editor.createPage(LOG_PAGE_NAME, {}, { createFirstBlock: true });
+    }
+
+    if (page?.uuid) {
+      logPageUuid = page.uuid;
+      await logseq.Editor.insertBlock(page.uuid, `=== ${PROJECT_NAME} session start ${new Date().toISOString()} ===`, { sibling: false });
+      logPageReady = true;
+    }
+  } catch (e) {
+    console.error(format(`failed to init log page: ${(e as Error).message}`));
+  }
+}
+
+async function initPageLogger() {
+  await ensureLogPage();
 }
 
 // Though it doesn't provide the name, at least it does compile check
@@ -21,10 +49,38 @@ function nameof<T>(name: Extract<keyof T, string>): string {
 
 function log(message: string) {
   console.log(format(message));
+  appendLog("INFO", message);
 }
 
 function error(message: string) {
   console.error(format(message));
+  appendLog("ERROR", message);
+}
+
+function appendLog(level: string, message: string) {
+  if (logging) {
+    return;
+  }
+
+  logging = true;
+  (async () => {
+    try {
+      if (!logPageReady) {
+        await ensureLogPage();
+      }
+
+      if (!logPageUuid) {
+        return;
+      }
+
+      const line = `${new Date().toISOString()} [${level}] ${format(message)}`;
+      await logseq.Editor.insertBlock(logPageUuid, line, { sibling: true });
+    } catch (e) {
+      console.error(format(`failed to append log: ${(e as Error).message}`));
+    } finally {
+      logging = false;
+    }
+  })();
 }
 
 function showMsg(message: string) {

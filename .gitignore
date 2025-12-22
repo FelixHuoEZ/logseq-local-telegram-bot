@@ -19,3 +19,6 @@ dist/
 .vscode/
 
 coverage/
+
+# Develop Docs
+LOG.md
