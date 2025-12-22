@@ -14,6 +14,7 @@ import {
   nameof,
   stringifyBlocks,
   initPageLogger,
+  setPageLoggingEnabled,
 } from "./utils";
 import { runAtInterval, cancelJob } from "./timed-job";
 import { settings, initializeSettings, Settings } from "./settings";
@@ -391,7 +392,6 @@ async function start(bot: Telegraf<Context>) {
 }
 
 async function main() {
-  await initPageLogger();
   const bot = new Telegraf<Context>("");
 
   bot.catch(async (err, ctx) => {
@@ -439,8 +439,20 @@ async function main() {
           disableCustomizedCommands();
         }
         break;
+
+      case nameof<Settings>("enablePageLogging"):
+        setPageLoggingEnabled(settings.enablePageLogging);
+        if (settings.enablePageLogging) {
+          void initPageLogger();
+        }
+        break;
     }
   });
+
+  setPageLoggingEnabled(settings.enablePageLogging);
+  if (settings.enablePageLogging) {
+    await initPageLogger();
+  }
 
   setupBot(bot);
 

@@ -4,13 +4,26 @@ import { BlockEntity } from "@logseq/libs/dist/LSPlugin.user";
 import { Message } from "typegram";
 import { settings } from "./settings";
 
-export { log, error, showMsg, showError, getDateString, getTimestampString, isMessageAuthorized, nameof, stringifyBlocks, initPageLogger };
+export {
+  log,
+  error,
+  showMsg,
+  showError,
+  getDateString,
+  getTimestampString,
+  isMessageAuthorized,
+  nameof,
+  stringifyBlocks,
+  initPageLogger,
+  setPageLoggingEnabled,
+};
 
 const PROJECT_NAME = "Local Telegram Bot";
 const LOG_PAGE_NAME = "Local Telegram Bot Log";
 let logPageUuid: string | null = null;
 let logPageReady = false;
 let logging = false;
+let pageLoggingEnabled = false;
 
 function format(message: string) {
   return `[${PROJECT_NAME}] ` + message;
@@ -24,12 +37,20 @@ async function ensureLogPage() {
   try {
     let page = await logseq.Editor.getPage(LOG_PAGE_NAME);
     if (!page) {
-      page = await logseq.Editor.createPage(LOG_PAGE_NAME, {}, { createFirstBlock: true });
+      page = await logseq.Editor.createPage(
+        LOG_PAGE_NAME,
+        {},
+        { createFirstBlock: true },
+      );
     }
 
     if (page?.uuid) {
       logPageUuid = page.uuid;
-      await logseq.Editor.insertBlock(page.uuid, `=== ${PROJECT_NAME} session start ${new Date().toISOString()} ===`, { sibling: false });
+      await logseq.Editor.insertBlock(
+        page.uuid,
+        `=== ${PROJECT_NAME} session start ${new Date().toISOString()} ===`,
+        { sibling: false },
+      );
       logPageReady = true;
     }
   } catch (e) {
@@ -38,6 +59,9 @@ async function ensureLogPage() {
 }
 
 async function initPageLogger() {
+  if (!pageLoggingEnabled) {
+    return;
+  }
   await ensureLogPage();
 }
 
@@ -45,6 +69,10 @@ async function initPageLogger() {
 // https://stackoverflow.com/a/50470026
 function nameof<T>(name: Extract<keyof T, string>): string {
   return name;
+}
+
+function setPageLoggingEnabled(enabled: boolean) {
+  pageLoggingEnabled = enabled;
 }
 
 function log(message: string) {
@@ -58,6 +86,9 @@ function error(message: string) {
 }
 
 function appendLog(level: string, message: string) {
+  if (!pageLoggingEnabled) {
+    return;
+  }
   if (logging) {
     return;
   }
@@ -95,7 +126,7 @@ function getDateString(date: Date) {
   const d = {
     day: `${date.getDate()}`.padStart(2, "0"),
     month: `${date.getMonth() + 1}`.padStart(2, "0"),
-    year: date.getFullYear()
+    year: date.getFullYear(),
   };
 
   return `${d.year}${d.month}${d.day}`;
@@ -104,7 +135,7 @@ function getDateString(date: Date) {
 function getTimestampString(date: Date) {
   const t = {
     hour: `${date.getHours()}`.padStart(2, "0"),
-    minute: `${date.getMinutes()}`.padStart(2, "0")
+    minute: `${date.getMinutes()}`.padStart(2, "0"),
   };
 
   return `${t.hour}:${t.minute}`;
@@ -118,7 +149,7 @@ function isMessageAuthorized(message: Message.ServiceMessage): boolean {
 
   if (settings.authorizedUsers.length > 0) {
     if (!settings.authorizedUsers.includes(message.from.username)) {
-      log(`Unauthorized username: ${message.from.username}`)
+      log(`Unauthorized username: ${message.from.username}`);
       return false;
     }
   }
@@ -133,7 +164,12 @@ function isMessageAuthorized(message: Message.ServiceMessage): boolean {
   return true;
 }
 
-function convertBlocksToText(root: BlockEntity, addId: boolean, tab: string, indent: string): string {
+function convertBlocksToText(
+  root: BlockEntity,
+  addId: boolean,
+  tab: string,
+  indent: string,
+): string {
   if (!root) {
     error("Block doesn't include content");
     return "";
@@ -142,7 +178,12 @@ function convertBlocksToText(root: BlockEntity, addId: boolean, tab: string, ind
   let text = indent + root.content + (addId ? `(\`${root.uuid}\`)` : "") + "\n";
   if (root.children) {
     for (let child of root.children) {
-      text += convertBlocksToText(child as BlockEntity, addId, tab, indent + tab);
+      text += convertBlocksToText(
+        child as BlockEntity,
+        addId,
+        tab,
+        indent + tab,
+      );
     }
   }
 
