@@ -16,10 +16,12 @@ export {
   stringifyBlocks,
   initPageLogger,
   setPageLoggingEnabled,
+  formatError,
 };
 
 const PROJECT_NAME = "Local Telegram Bot";
 const LOG_PAGE_NAME = "Local Telegram Bot Log";
+const BOT_TOKEN_REDACTION_REGEX = /\b[0-9]{8,10}:[a-zA-Z0-9_-]{35}\b/g;
 let logPageUuid: string | null = null;
 let logPageReady = false;
 let logging = false;
@@ -27,6 +29,75 @@ let pageLoggingEnabled = false;
 
 function format(message: string) {
   return `[${PROJECT_NAME}] ` + message;
+}
+
+function redactTokens(value: string) {
+  return value.replace(BOT_TOKEN_REDACTION_REGEX, "<redacted>");
+}
+
+function safeStringify(value: unknown): string | null {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function formatError(err: unknown): string {
+  if (err instanceof Error) {
+    const details: string[] = [];
+    if (err.name) {
+      details.push(`name=${err.name}`);
+    }
+    if (err.message) {
+      details.push(`message=${err.message}`);
+    }
+
+    const extra = err as {
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      response?: unknown;
+      cause?: unknown;
+    };
+
+    if (extra.code) {
+      details.push(`code=${String(extra.code)}`);
+    }
+    if (extra.status) {
+      details.push(`status=${String(extra.status)}`);
+    }
+    if (extra.statusCode) {
+      details.push(`statusCode=${String(extra.statusCode)}`);
+    }
+    if (extra.response) {
+      const response = safeStringify(extra.response);
+      if (response) {
+        details.push(`response=${response}`);
+      }
+    }
+    if (extra.cause) {
+      details.push(`cause=${formatError(extra.cause)}`);
+    }
+    if (err.stack) {
+      details.push(`stack=${err.stack.replace(/\s*\n\s*/g, " | ")}`);
+    }
+
+    return redactTokens(details.join("; ") || "unknown error");
+  }
+
+  if (typeof err === "string") {
+    return redactTokens(err);
+  }
+
+  if (err && typeof err === "object") {
+    const json = safeStringify(err);
+    if (json) {
+      return redactTokens(json);
+    }
+  }
+
+  return redactTokens(String(err));
 }
 
 async function ensureLogPage() {

@@ -15,6 +15,7 @@ import {
   stringifyBlocks,
   initPageLogger,
   setPageLoggingEnabled,
+  formatError,
 } from "./utils";
 import { runAtInterval, cancelJob } from "./timed-job";
 import { settings, initializeSettings, Settings } from "./settings";
@@ -48,6 +49,7 @@ let recoveringBot = false;
 let healthCheckTimer: number | null = null;
 let lastPollingStartAt: number | null = null;
 let lastPollingCompleteAt: number | null = null;
+let launchBlockedByInvalidToken = false;
 
 const blockContextMenuHandlers: { [key: string]: OperationHandler } = {
   Send: handleSendOperation,
@@ -169,7 +171,11 @@ function startHealthCheck(bot: Telegraf<Context>) {
   healthCheckTimer = window.setInterval(async () => {
     log("health check: polling tick");
     // only recover main bot with valid token
-    if (!settings.isMainBot || !settings.botToken) {
+    if (
+      !settings.isMainBot ||
+      !settings.botToken ||
+      launchBlockedByInvalidToken
+    ) {
       return;
     }
 
@@ -188,11 +194,9 @@ function startHealthCheck(bot: Telegraf<Context>) {
   }, HEALTH_CHECK_INTERVAL_IN_MS);
 }
 
-function stopHealthCheck() {
-  if (healthCheckTimer) {
-    clearInterval(healthCheckTimer);
-    healthCheckTimer = null;
-  }
+function resetPollingMonitorState() {
+  lastPollingStartAt = null;
+  lastPollingCompleteAt = null;
 }
 
 function attachPollingMonitor(bot: Telegraf<Context>) {
@@ -258,6 +262,49 @@ function getPollingStuckReason(bot: Telegraf<Context>): string | null {
   return null;
 }
 
+function isUnauthorizedTelegramError(err: unknown): boolean {
+  if (err instanceof Error) {
+    const extra = err as {
+      code?: unknown;
+      status?: unknown;
+      statusCode?: unknown;
+      response?: { error_code?: unknown; description?: unknown };
+      message?: unknown;
+    };
+    const statusCodes = [
+      extra.code,
+      extra.status,
+      extra.statusCode,
+      extra.response?.error_code,
+    ];
+    if (statusCodes.some((value) => Number(value) === 401)) {
+      return true;
+    }
+
+    const texts = [extra.message, extra.response?.description]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+    return /unauthorized|invalid token/i.test(texts);
+  }
+
+  if (typeof err === "string") {
+    return /unauthorized|invalid token/i.test(err);
+  }
+
+  return false;
+}
+
+function showLaunchFailure(err: unknown) {
+  if (isUnauthorizedTelegramError(err)) {
+    launchBlockedByInvalidToken = true;
+    showError("Bot Token is not valid");
+    logseq.showSettingsUI();
+    return;
+  }
+
+  showError("Bot connection failed and will retry automatically");
+}
+
 function setupMarked(bot: Telegraf<Context>) {
   const renderer = new marked.Renderer();
   renderer.image = (href, title, text) => {
@@ -274,14 +321,14 @@ async function startMainBot(bot: Telegraf<Context>) {
     await bot.telegram.getMe();
     await bot.launch();
   } catch (e) {
-    error("bot failed to launch");
-    showError("Bot Token is not valid");
-    logseq.showSettingsUI();
+    error(`bot failed to launch: ${formatError(e)}`);
+    showLaunchFailure(e);
 
     // rethrow to stop the process
     throw e;
   }
 
+  launchBlockedByInvalidToken = false;
   startTimedJobs(bot);
   startHealthCheck(bot);
 
@@ -297,13 +344,12 @@ async function startMainBot(bot: Telegraf<Context>) {
 async function stopMainBot(bot: Telegraf<Context>) {
   disableCustomizedCommands();
   stopTimedJobs();
-  stopHealthCheck();
   const stopResult = await Promise.race([
     bot
       .stop()
       .then(() => ({ status: "stopped" as const }))
       .catch((e) => {
-        error(`failed to stop bot: ${(e as Error).message}`);
+        error(`failed to stop bot: ${formatError(e)}`);
         return { status: "failed" as const };
       }),
     new Promise<{ status: "timeout" }>((resolve) =>
@@ -323,6 +369,8 @@ async function stopMainBot(bot: Telegraf<Context>) {
   } else if (stopResult.status === "stopped") {
     log("bot has stopped as Main Bot");
   }
+
+  resetPollingMonitorState();
 }
 
 async function recoverBot(bot: Telegraf<Context>) {
@@ -340,13 +388,13 @@ async function recoverBot(bot: Telegraf<Context>) {
   try {
     await stopMainBot(bot);
   } catch (e) {
-    error(`failed to stop bot when recovering: ${(<Error>e).message}`);
+    error(`failed to stop bot when recovering: ${formatError(e)}`);
   }
 
   try {
     await start(bot);
   } catch (e) {
-    error(`failed to restart bot when recovering: ${(<Error>e).message}`);
+    error(`failed to restart bot when recovering: ${formatError(e)}`);
   } finally {
     recoveringBot = false;
   }
@@ -377,7 +425,9 @@ async function start(bot: Telegraf<Context>) {
     await stopMainBot(bot);
   }
 
+  launchBlockedByInvalidToken = false;
   bot.token = settings.botToken;
+  resetPollingMonitorState();
   attachPollingMonitor(bot);
 
   if (settings.enableCustomizedCommand) {
@@ -395,7 +445,7 @@ async function main() {
   const bot = new Telegraf<Context>("");
 
   bot.catch(async (err, ctx) => {
-    error(`bot caught an error: ${(<Error>err).message}`);
+    error(`bot caught an error: ${formatError(err)}`);
     await recoverBot(bot);
   });
 
@@ -403,15 +453,15 @@ async function main() {
   initializeSettings((name) => {
     switch (name) {
       case nameof<Settings>("botToken"):
-        start(bot);
+        void start(bot).catch(() => undefined);
         break;
 
       case nameof<Settings>("isMainBot"):
         if (bot.token) {
           if (settings.isMainBot) {
-            startMainBot(bot);
+            void startMainBot(bot).catch(() => undefined);
           } else {
-            stopMainBot(bot);
+            void stopMainBot(bot);
           }
         }
         break;
@@ -462,7 +512,7 @@ async function main() {
     return;
   }
 
-  start(bot);
+  void start(bot).catch(() => undefined);
 }
 
 // bootstrap
