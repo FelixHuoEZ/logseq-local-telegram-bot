@@ -4,22 +4,32 @@ import { Telegraf, Context } from "telegraf";
 import { MessageSubTypes } from "telegraf/typings/telegram-types";
 import { Message, MessageEntity } from "typegram";
 
-import { log, error, getDateString, getTimestampString, isMessageAuthorized } from "./utils";
+import {
+  log,
+  error,
+  getDateString,
+  getTimestampString,
+  isMessageAuthorized,
+} from "./utils";
 import { settings, JOURNAL_PAGE_NAME } from "./settings";
 
 export { setupMessageHandlers };
 
-type MessageHandler = (ctx: Context, message: Message.ServiceMessage) => Promise<void>;
+type MessageHandler = (
+  ctx: Context,
+  message: Message.ServiceMessage,
+) => Promise<void>;
 type EntityHandler = (text: string, entity: MessageEntity) => string;
 type ServiceMsg = Message.ServiceMessage & { chat?: { id?: number } };
 
 // FIXME: it matches all showPhoto, instead of current one
-const SHOW_PHOTO_RENDERER_REGEX = /{{renderer :local_telegram_bot-showPhoto[^}]*}}!\[[^\]]*\]\([^\)]*\)/;
+const SHOW_PHOTO_RENDERER_REGEX =
+  /{{renderer :local_telegram_bot-showPhoto[^}]*}}!\[[^\]]*\]\([^\)]*\)/;
 const DEFAULT_CAPTION = "no caption";
 
-const entityHandlers: { [ type: string ]: EntityHandler } = {
-  "pre": handleCodeEntity,
-  "code": handleCodeEntity
+const entityHandlers: { [type: string]: EntityHandler } = {
+  pre: handleCodeEntity,
+  code: handleCodeEntity,
 };
 
 async function findPage(pageName: string): Promise<BlockEntity[]> {
@@ -51,7 +61,11 @@ async function findPage(pageName: string): Promise<BlockEntity[]> {
   return logseq.Editor.getPageBlocksTree(pages[0].name);;
 }
 
-async function writeBlock(pageName: string, inboxName: string, text: string): Promise<boolean> {
+async function writeBlock(
+  pageName: string,
+  inboxName: string,
+  text: string,
+): Promise<boolean> {
   const pageBlocksTree = await findPage(pageName);
   if (!pageBlocksTree || pageBlocksTree.length == 0) {
     log("Request page is not available");
@@ -72,8 +86,8 @@ async function writeBlock(pageName: string, inboxName: string, text: string): Pr
         inboxName,
         {
           before: false,
-          sibling: true
-        }
+          sibling: true,
+        },
       );
     }
   }
@@ -93,7 +107,7 @@ function handleCodeEntity(text: string, entity: MessageEntity): string {
   if (text.indexOf("\n") > 0) {
     code = "```";
   }
-  
+
   return code + text + code;
 }
 
@@ -130,7 +144,10 @@ function textHandlerGenerator() {
         let offset = 0;
         for (let entity of message.entities) {
           subs.push(text.substring(offset, entity.offset));
-          let sub = text.substring(entity.offset, entity.offset + entity.length);
+          let sub = text.substring(
+            entity.offset,
+            entity.offset + entity.length,
+          );
           subs.push(handleEntity(sub, entity));
           offset = entity.offset + entity.length;
         }
@@ -146,13 +163,10 @@ function textHandlerGenerator() {
         const receiveDate = new Date();
         receiveDate.setTime(message.date * 1000);
 
-        text = `${getTimestampString(receiveDate)} - ${text}`; 
+        text = `${getTimestampString(receiveDate)} - ${text}`;
       }
 
-      if (!await writeBlock(
-        settings.pageName,
-        settings.inboxName,
-        text)) {
+      if (!(await writeBlock(settings.pageName, settings.inboxName, text))) {
         await ctx.reply("Failed to write this to Logseq");
       }
     } catch (e) {
@@ -167,7 +181,7 @@ function textHandlerGenerator() {
 
   return {
     type: "text",
-    handler: handler as MessageHandler
+    handler: handler as MessageHandler,
   };
 }
 
@@ -196,10 +210,7 @@ function photoHandlerGenerator(bot: Telegraf<Context>) {
         text = `${getTimestampString(receiveDate)} - ${text}`;
       }
 
-      if (!await writeBlock(
-        settings.pageName,
-        settings.inboxName,
-        text)) {
+      if (!(await writeBlock(settings.pageName, settings.inboxName, text))) {
         await ctx.reply("Failed to write this to Logseq");
       }
     } catch (e) {
@@ -216,7 +227,10 @@ function photoHandlerGenerator(bot: Telegraf<Context>) {
     try {
       let [type, caption, photoId] = payload.arguments;
       // backward compatibility
-      if (type !== ':local_telegram_bot' && type !== ":local_telegram_bot-showPhoto") {
+      if (
+        type !== ":local_telegram_bot" &&
+        type !== ":local_telegram_bot-showPhoto"
+      ) {
         return;
       }
 
@@ -228,8 +242,9 @@ function photoHandlerGenerator(bot: Telegraf<Context>) {
 
       const photoUrl = await bot.telegram.getFileLink(photoId);
       const content = block.content.replace(
-                        SHOW_PHOTO_RENDERER_REGEX,
-                        photoTemplate(caption, photoId, photoUrl));
+        SHOW_PHOTO_RENDERER_REGEX,
+        photoTemplate(caption, photoId, photoUrl),
+      );
 
       // replace the whole block with new renderer and img
       // renderer runs once at one time, so no loop
@@ -243,7 +258,7 @@ function photoHandlerGenerator(bot: Telegraf<Context>) {
 
   return {
     type: "photo",
-    handler: handler as MessageHandler
+    handler: handler as MessageHandler,
   };
 }
 
@@ -267,10 +282,7 @@ function documentHandlerGenerator(bot: Telegraf<Context>) {
         text = `${getTimestampString(receiveDate)} - ${text}`;
       }
 
-      if (!await writeBlock(
-        settings.pageName,
-        settings.inboxName,
-        text)) {
+      if (!(await writeBlock(settings.pageName, settings.inboxName, text))) {
         await ctx.reply("Failed to write this to Logseq");
       }
     } catch (e) {
@@ -284,22 +296,24 @@ function documentHandlerGenerator(bot: Telegraf<Context>) {
   }
   return {
     type: "document",
-    handler: handler as MessageHandler
+    handler: handler as MessageHandler,
   };
 }
 
 function setupMessageHandlers(bot: Telegraf<Context>) {
-  const messageHandlers: { type: string, handler: MessageHandler }[] = [
+  const messageHandlers: { type: string; handler: MessageHandler }[] = [
     textHandlerGenerator(),
     photoHandlerGenerator(bot),
-    documentHandlerGenerator(bot)
+    documentHandlerGenerator(bot),
   ];
 
   for (let handler of messageHandlers) {
     // FIXME: no way to check union type?
     bot.on(handler.type as MessageSubTypes, (ctx) => {
-      if (ctx.message
-        && isMessageAuthorized(ctx.message as Message.ServiceMessage)) {
+      if (
+        ctx.message &&
+        isMessageAuthorized(ctx.message as Message.ServiceMessage)
+      ) {
         handler.handler(ctx, ctx.message);
       }
     });
